@@ -1541,21 +1541,29 @@ async def start_koyeb_health_check(host: str = "0.0.0.0", port: int | str = 8080
 # --- MAIN ENTRY POINT ---
 # ==============================================================================
 
-if __name__ == "__main__":
-    print("Bot Started Powered By @DestinyBots")
-    
-    # --- Clean trash on startup ---
+async def main():
+    # 1. Clean trash on startup
     if os.path.exists("./downloads"):
         try:
             shutil.rmtree("./downloads")
             print("✅ Cleanup: Deleted old downloads folder.")
         except Exception as e:
             print(f"⚠️ Cleanup Error: {e}")
-    # -------------------------------------
-
-    # Start Health Check in Background
-    loop = asyncio.get_event_loop()
-    loop.create_task(start_koyeb_health_check())
+            
+    # 2. Start the Bot
+    await app.start()
+    print("Bot Started Powered By @DestinyBots")
     
-    # Run Pyrogram Client
-    app.run()
+    # 3. Start Health Check (Now safe because loop is running)
+    asyncio.create_task(start_koyeb_health_check())
+    
+    # 4. Keep running until stopped
+    await idle()
+    
+    # 5. Stop cleanly
+    await app.stop()
+
+if __name__ == "__main__":
+    # app.run() automatically creates the loop and runs our main() function
+    app.run(main())
+            
