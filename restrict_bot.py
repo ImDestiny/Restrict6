@@ -404,11 +404,75 @@ async def send_start(client: Client, message: Message):
 async def send_help(client: Client, message: Message):
     await client.send_message(message.chat.id, f"{HELP_TXT}")
 
+# --- CANCEL COMMAND (Interactive) ---
 @app.on_message(filters.command(["cancel"]) & (filters.private | filters.group))
 async def send_cancel(client: Client, message: Message):
-    batch_temp.IS_BATCH[message.from_user.id] = True
-    await client.send_message(message.chat.id, "**Batch Successfully Cancelled.**")
+    user_id = message.from_user.id
+    
+    # Check if user has active tasks
+    if batch_temp.ACTIVE_TASKS[user_id] <= 0:
+        await message.reply("✅ **No active tasks to cancel.**")
+        return
 
+    buttons = [
+        [InlineKeyboardButton("🛑 Cancel ALL Tasks", callback_data="cancel_all")],
+        [InlineKeyboardButton("🎯 Cancel Specific Task", callback_data="cancel_list")],
+        [InlineKeyboardButton("❌ Close Menu", callback_data="close_menu")]
+    ]
+    
+    await message.reply(
+        "**🚫 Cancel Tasks**\n\nChoose an option:",
+        reply_markup=InlineKeyboardMarkup(buttons),
+        quote=True
+    )
+
+@app.on_callback_query(filters.regex("^cancel_"))
+async def cancel_callback(client: Client, query):
+    user_id = query.from_user.id
+    data = query.data
+    
+    if data == "cancel_all":
+        batch_temp.IS_BATCH[user_id] = True # Sets the "Stop" flag
+        await query.message.edit("**🛑 Cancelling ALL tasks...**\n(This may take a moment to stop current downloads)")
+        # Reset active count manually after a delay if needed, but loop checks flag.
+        
+    elif data == "cancel_list":
+        # Check active tasks again
+        if user_id not in ACTIVE_PROCESSES:
+             await query.answer("No active tasks found!", show_alert=True)
+             return
+             
+        task_info = ACTIVE_PROCESSES[user_id]
+        # Since your current system tracks 1 active task detailed info per user in ACTIVE_PROCESSES,
+        # We show that one. If you expand to multi-task tracking later, you'd list them here.
+        
+        task_name = task_info.get('item', 'Unknown Task')
+        buttons = [
+            [InlineKeyboardButton(f"🛑 Stop: {task_name[:20]}...", callback_data="cancel_all")], # Re-use cancel_all for single user limit
+            [InlineKeyboardButton("🔙 Back", callback_data="cancel_menu")]
+        ]
+        await query.message.edit("**Select Task to Cancel:**", reply_markup=InlineKeyboardMarkup(buttons))
+
+    elif data == "cancel_menu":
+        # Go back to main menu
+        buttons = [
+            [InlineKeyboardButton("🛑 Cancel ALL Tasks", callback_data="cancel_all")],
+            [InlineKeyboardButton("🎯 Cancel Specific Task", callback_data="cancel_list")],
+            [InlineKeyboardButton("❌ Close Menu", callback_data="close_menu")]
+        ]
+        await query.message.edit("**🚫 Cancel Tasks**", reply_markup=InlineKeyboardMarkup(buttons))
+
+@app.on_callback_query(filters.regex("^close_menu"))
+async def close_menu(client, query):
+    await query.message.delete()
+
+@app.on_callback_query(filters.regex("^cancel_setup"))
+async def cancel_setup_handler(client, query):
+    user_id = query.from_user.id
+    if user_id in PENDING_TASKS:
+        del PENDING_TASKS[user_id]
+    await query.message.edit("❌ **Task Setup Cancelled.**")
+    
 @app.on_message(filters.command(["status"]) & filters.user(ADMINS))
 async def status_style_handler(client, message):
     # 1. Calculate Uptime
@@ -669,7 +733,8 @@ async def save(client: Client, message: Message):
     
     buttons = [
         [InlineKeyboardButton("📂 Send to DM (Here)", callback_data="dest_dm")],
-        [InlineKeyboardButton("📢 Send to Channel/Group", callback_data="dest_custom")]
+        [InlineKeyboardButton("📢 Send to Channel/Group", callback_data="dest_custom")],
+        [InlineKeyboardButton("❌ Cancel Setup", callback_data="cancel_setup")] # <--- NEW BUTTON
     ]
     await message.reply(
         "**🔗 Link Received!**\n\nWhere should I send the downloaded files?",
@@ -681,25 +746,40 @@ async def save(client: Client, message: Message):
 @app.on_message(filters.command(["dl"]) & (filters.private | filters.group))
 async def dl_handler(client: Client, message: Message):
     user_id = message.from_user.id
+    reply = message.reply_to_message
+    target = ""
     
     # 1. Extract Link (From Reply or Command Args)
-    link_text = ""
-    reply = message.reply_to_message
-    
-    if reply and (reply.text or reply.caption):
-        link_text = reply.text or reply.caption
-    elif len(message.command) > 1:
-        link_text = message.text.split(None, 1)[1]
+    if reply:
+        # A. If replying to a Media File (Video, Doc, Photo, etc.)
+        # We construct a direct link to this message so the bot can "download" it.
+        if reply.document or reply.video or reply.audio or reply.photo or reply.voice:
+            if reply.chat.username:
+                # Public Chat Link
+                target = f"https://t.me/{reply.chat.username}/{reply.id}"
+            else:
+                # Private Chat Link
+                chat_id = str(reply.chat.id).replace("-100", "")
+                target = f"https://t.me/c/{chat_id}/{reply.id}"
         
-    if not link_text or "https://t.me/" not in link_text:
-        await message.reply_text("**Usage:**\n• Reply to a link with /dl\n• Or send `/dl https://t.me/...`")
+        # B. If replying to a Text Message containing a link
+        elif reply.text or reply.caption:
+            target = reply.text or reply.caption
+            
+    # C. If sending command with link: /dl https://t.me/...
+    elif len(message.command) > 1:
+        target = message.text.split(None, 1)[1]
+        
+    # Validation
+    if not target or "https://t.me/" not in target:
+        await message.reply_text("**Usage:**\n• Reply to a link/file with /dl\n• Or send `/dl https://t.me/...`")
         return
 
     # 2. GROUP BEHAVIOR (Auto-Set Destination -> Ask Speed)
     # This activates ONLY when you use /dl in a group.
     if message.chat.type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP]:
         PENDING_TASKS[user_id] = {
-            "link": link_text,
+            "link": target,
             "dest_chat_id": message.chat.id,
             "dest_thread_id": message.message_thread_id,
             "dest_title": message.chat.title or "This Group",
@@ -710,7 +790,7 @@ async def dl_handler(client: Client, message: Message):
         return
 
     # 3. PRIVATE BEHAVIOR (Standard Setup)
-    PENDING_TASKS[user_id] = {"link": link_text, "status": "waiting_choice"}
+    PENDING_TASKS[user_id] = {"link": target, "status": "waiting_choice"}
     
     buttons = [
         [InlineKeyboardButton("📂 Send to DM (Here)", callback_data="dest_dm")],
@@ -721,7 +801,7 @@ async def dl_handler(client: Client, message: Message):
         reply_markup=InlineKeyboardMarkup(buttons),
         quote=True
     )
-    
+
 @app.on_callback_query(filters.regex("^dest_"))
 async def destination_callback(client: Client, query):
     user_id = query.from_user.id
@@ -737,14 +817,16 @@ async def destination_callback(client: Client, query):
         
     elif choice == "dest_custom":
         PENDING_TASKS[user_id]["status"] = "waiting_id"
+        buttons = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_setup")]] # <--- NEW
         await query.message.edit(
             "📝 **Send the Target Chat ID**\n\n"
             "Examples:\n"
             "• Channel/Group: `-100123456789`\n"
             "• Specific Topic: `-100123456789/5`\n\n"
-            "⚠️ __Make sure I am an admin in that chat!__"
+            "⚠️ __Make sure I am an admin in that chat!__",
+            reply_markup=InlineKeyboardMarkup(buttons)
         )
-
+        
 async def process_custom_destination(client: Client, message: Message):
     user_id = message.from_user.id
     text = message.text.strip()
@@ -779,7 +861,8 @@ async def process_custom_destination(client: Client, message: Message):
 async def ask_for_speed(message: Message):
     buttons = [
         [InlineKeyboardButton("⚡ Default (3s)", callback_data="speed_default")],
-        [InlineKeyboardButton("⚙️ Manual Speed", callback_data="speed_manual")]
+        [InlineKeyboardButton("⚙️ Manual Speed", callback_data="speed_manual")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="cancel_setup")] # <--- NEW
     ]
     if isinstance(message, Message) and message.from_user.is_bot: 
          await message.edit("**🚀 Select Forwarding Speed**\n\nHow fast should I process messages?", reply_markup=InlineKeyboardMarkup(buttons))
