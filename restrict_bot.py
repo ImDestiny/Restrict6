@@ -43,24 +43,26 @@ SUDOS = [int(x) for x in sudo_str.split(",") if x.strip().isdigit()]
 
 HELP_TXT = """**🌟 Help Menu** **__FOR PRIVATE CHATS__**
 
-__first send invite link of the chat (unnecessary if the account of string session already member of the chat)
-then send post/s link__
+HELP_TXT = """**📚 SAVE RESTRICTED CONTENT - HELP MENU**
 
+**🟢 1. PRIVATE CHATS**
+• First, send the **Invite Link** of the chat.
+  *(Not needed if you are already a member via the session account)*
+• Then, send the **Post Link** you want to download.
 
-**__FOR BOT CHATS__**
+**🤖 2. BOT CHATS**
+• Send the link with `/b/`, the bot's username, and message ID.
+• You usually need an unofficial client (like Plus Messenger or Nekogram) to get these links.
+• **Format:** `https://t.me/b/botusername/4321`
 
-__send link with '/b/', bot's username and message id, you might want to install some unofficial client to get the id like below__
+**📦 3. BATCH / MULTI-POSTS**
+• Send links in the "From - To" format to download multiple files at once.
+• Works for both Public and Private links.
+• **Examples:**
+  ├ `https://t.me/xxxx/1001-1010`
+  └ `https://t.me/c/xxxx/101 - 120`
 
-https://t.me/b/botusername/4321
-
-**__MULTI POSTS__**
-
-__send public/private posts link as explained above with formate "from - to" to send multiple messages like below__
-
-https://t.me/xxxx/1001-1010
-https://t.me/c/xxxx/101 - 120
-
-__note that space in between doesn't matter__"""
+**💡 Note:** Spaces between the numbers do not matter!"""
 
 # ==============================================================================
 # --- DATABASE ---
