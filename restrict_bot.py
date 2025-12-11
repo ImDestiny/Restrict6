@@ -360,14 +360,48 @@ def get_message_type(msg: Message):
 
 @app.on_message(filters.command(["start"]) & (filters.private | filters.group))
 async def send_start(client: Client, message: Message):
-    if not await db.is_user_exist(message.from_user.id):
-        await db.add_user(message.from_user.id, message.from_user.first_name)
+    # --- 1. Log and Save User (Database) ---
+    user_id = message.from_user.id
+    user_name = message.from_user.first_name
+    
+    try:
+        if not await db.is_user_exist(user_id):
+            await db.add_user(user_id, user_name)
+            print(f"New user {user_id} saved to database.") # Simple logging
+    except Exception as e:
+        print(f"Failed to save user {user_id}: {e}")
+
+    # --- 2. Send Welcome Video & Text ---
+    welcome_video_url = "https://files.catbox.moe/o9azww.mp4"
+    welcome_text = (
+        f"<b>👋 Hi {message.from_user.mention}, I am Save Restricted Content Bot.</b>\n\n"
+        "<b>For downloading restricted content /login first.</b>\n\n"
+        "<b>Know how to use bot by - /help</b>"
+    )
+    
     buttons = [
         [InlineKeyboardButton("❣️ Developer", url = "https://t.me/thanuj66")],
         [InlineKeyboardButton('🔍 sᴜᴘᴘᴏʀᴛ ɢʀᴏᴜᴘ', url='https://t.me/telegram'), InlineKeyboardButton('🤖 ᴜᴘᴅᴀᴛᴇ ᴄʜᴀɴɴᴇʟ', url='https://t.me/telegram')]
     ]
-    await client.send_message(message.chat.id, f"<b>👋 Hi {message.from_user.mention}, I am Save Restricted Content Bot.\n\nFor downloading restricted content /login first.\n\nKnow how to use bot by - /help</b>", reply_markup=InlineKeyboardMarkup(buttons), reply_to_message_id=message.id)
 
+    # Try sending video, fall back to message if video fails/is invalid
+    try:
+        await client.send_video(
+            chat_id=message.chat.id, 
+            video=welcome_video_url, 
+            caption=welcome_text, 
+            reply_markup=InlineKeyboardMarkup(buttons),
+            reply_to_message_id=message.id
+        )
+    except Exception as e:
+        # Fallback if video link dies or fails
+        await client.send_message(
+            chat_id=message.chat.id,
+            text=welcome_text,
+            reply_markup=InlineKeyboardMarkup(buttons),
+            reply_to_message_id=message.id
+    )
+        
 @app.on_message(filters.command(["help"]) & (filters.private | filters.group))
 async def send_help(client: Client, message: Message):
     await client.send_message(message.chat.id, f"{HELP_TXT}")
