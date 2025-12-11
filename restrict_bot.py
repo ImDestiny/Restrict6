@@ -302,18 +302,28 @@ async def downstatus(client: Client, status_message: Message, chat, index: int, 
         tot = rec.get("total", 0)
         speed = rec.get("speed", 0.0)
         eta = rec.get("eta")
-        bar = generate_bar(percent, length=10)
-        header = f"**File {index}/{total_count}** • **Remaining:** {max(0, total_count-index)}\n\n"
-        status = header + f"**📥 Downloading...**\n┠ `[{bar}]` {percent:.1f}%\n┠ **Processed:** {_pretty_bytes(cur)} of {_pretty_bytes(tot)}\n┠ **Speed:** {_pretty_bytes(speed)}/s\n┖ **ETA:** {get_readable_time(int(eta) if eta else 0)}"
+        bar = generate_bar(percent, length=12) # Slightly longer bar
+        
+        # --- NEW STYLE ---
+        status = (
+            f"📥 **Downloading File ({index}/{total_count})**\n"
+            f"└ 📂 `{max(0, total_count-index)}` remaining\n\n"
+            f"**{percent:.1f}%** │ `{bar}`\n\n"
+            f"🚀 **Speed:** `{_pretty_bytes(speed)}/s`\n"
+            f"💾 **Size:** `{_pretty_bytes(cur)} / {_pretty_bytes(tot)}`\n"
+            f"⏳ **ETA:** `{get_readable_time(int(eta) if eta else 0)}`"
+        )
+        # -----------------
+
         if status != last_text:
             try:
                 await client.edit_message_text(chat, msg_id, status)
                 last_text = status
             except:
                 pass
-        await asyncio.sleep(15)
+        await asyncio.sleep(10) # 10s is smoother than 15s
     try:
-        await client.edit_message_text(chat, msg_id, f"**File {index}/{total_count}** • **Remaining:** {max(0, total_count-index)}\n\n**Download complete. Processing...**")
+        await client.edit_message_text(chat, msg_id, f"✅ **Download Complete** ({index}/{total_count})\n⚡ **Processing file...**")
     except:
         pass
 
@@ -333,18 +343,28 @@ async def upstatus(client: Client, status_message: Message, chat, index: int, to
         tot = rec.get("total", 0)
         speed = rec.get("speed", 0.0)
         eta = rec.get("eta")
-        bar = generate_bar(percent, length=10)
-        header = f"**File {index}/{total_count}** • **Remaining:** {max(0, total_count-index)}\n\n"
-        status = header + f"**☁️ Uploading...**\n┠ `[{bar}]` {percent:.1f}%\n┠ **Processed:** {_pretty_bytes(cur)} of {_pretty_bytes(tot)}\n┠ **Speed:** {_pretty_bytes(speed)}/s\n┖ **ETA:** {get_readable_time(int(eta) if eta else 0)}"
+        bar = generate_bar(percent, length=12)
+
+        # --- NEW STYLE ---
+        status = (
+            f"☁️ **Uploading File ({index}/{total_count})**\n"
+            f"└ 📤 `{max(0, total_count-index)}` remaining\n\n"
+            f"**{percent:.1f}%** │ `{bar}`\n\n"
+            f"🚀 **Speed:** `{_pretty_bytes(speed)}/s`\n"
+            f"💾 **Size:** `{_pretty_bytes(cur)} / {_pretty_bytes(tot)}`\n"
+            f"⏳ **ETA:** `{get_readable_time(int(eta) if eta else 0)}`"
+        )
+        # -----------------
+
         if status != last_text:
             try:
                 await client.edit_message_text(chat, msg_id, status)
                 last_text = status
             except:
                 pass
-        await asyncio.sleep(15)
+        await asyncio.sleep(10)
     try:
-        await client.edit_message_text(chat, msg_id, f"**File {index}/{total_count}** • **Remaining:** {max(0, total_count-index)}\n\n**Upload complete.**")
+        await client.edit_message_text(chat, msg_id, f"✅ **Upload Complete** ({index}/{total_count})")
     except:
         pass
 
@@ -405,8 +425,8 @@ async def send_start(client: Client, message: Message):
             text=welcome_text,
             reply_markup=InlineKeyboardMarkup(buttons),
             reply_to_message_id=message.id
-    )
-        
+        )
+
 @app.on_message(filters.command(["help"]) & (filters.private | filters.group))
 async def send_help(client: Client, message: Message):
     await client.send_message(message.chat.id, f"{HELP_TXT}")
@@ -498,25 +518,28 @@ async def status_style_handler(client, message):
     disk_total = _pretty_bytes(disk.total)
     disk_free = _pretty_bytes(disk.free)
 
-    queue_text = ""
-    if not any(ACTIVE_PROCESSES.values()):
-        queue_text = "\n✅ Both download and forward queues are empty.\n"
-    else:
-        queue_text += "\n⚡ **Currently Downloading:**\n"
+    # Queue Logic
+    active_count = 0
+    queue_list = []
+    if ACTIVE_PROCESSES:
         for uid, tasks in ACTIVE_PROCESSES.items():
             for t_id, info in tasks.items():
-                queue_text += f"👤 {info.get('user')} - `{info.get('item')}` (id: `{t_id[:8]}`)\n"
+                active_count += 1
+                queue_list.append(f"• {info.get('user')} → `{info.get('item')[:20]}...`")
+    
+    queue_text = "\n".join(queue_list) if queue_list else "😴 No active tasks."
 
     msg = (
-        "📊 **Bot Status & Queue**\n"
-        f"{queue_text}\n"
-        "⌬ **Bot Stats** 🔎\n"
-        f"┟ CPU → {cpu}% | F → {disk_free}/{disk_total}\n"
-        f"┖ RAM → {mem}% | UP → {uptime_str}"
+        f"🔰 **SYSTEM DASHBOARD**\n\n"
+        f"⏱ **Uptime:** `{uptime_str}`\n"
+        f"🧠 **RAM:** `{mem}%`  │  ⚙️ **CPU:** `{cpu}%`\n"
+        f"💿 **Disk:** `{disk_free}` free / `{disk_total}` total\n\n"
+        f"📉 **Active Tasks ({active_count})**\n"
+        f"{queue_text}"
     )
 
     await message.reply(msg, quote=True)
-
+    
 @app.on_message(filters.command(["botstats"]) & filters.user(ADMINS))
 async def bot_stats_handler(client: Client, message: Message):
     total_users = await db.total_users_count()
@@ -766,11 +789,12 @@ async def save(client: Client, message: Message):
         [InlineKeyboardButton("❌ Cancel Setup", callback_data="cancel_setup")]
     ]
     await message.reply(
-        "**🔗 Link Received!**\n\nWhere should I send the downloaded files?",
+        "✨ **Link Detected!**\n\n"
+        "I am ready to process this content. Please tell me where you want the files sent:",
         reply_markup=InlineKeyboardMarkup(buttons),
         quote=True
     )
-
+    
 @app.on_message(filters.command(["dl"]) & (filters.private | filters.group))
 async def dl_handler(client: Client, message: Message):
     user_id = message.from_user.id
@@ -799,11 +823,12 @@ async def dl_handler(client: Client, message: Message):
         [InlineKeyboardButton("📢 Send to Channel/Group", callback_data="dest_custom")]
     ]
     await message.reply(
-        "**🔗 Link Received!**\n\nWhere should I send the downloaded files?",
+        "✨ **Link Detected!**\n\n"
+        "I am ready to process this content. Please tell me where you want the files sent:",
         reply_markup=InlineKeyboardMarkup(buttons),
         quote=True
     )
-
+    
 @app.on_callback_query(filters.regex("^dest_"))
 async def destination_callback(client: Client, query):
     user_id = query.from_user.id
