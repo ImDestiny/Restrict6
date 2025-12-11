@@ -41,8 +41,6 @@ ADMINS = [int(x) for x in admin_str.split(",") if x.strip().isdigit()]
 sudo_str = os.environ.get("SUDOS", "")
 SUDOS = [int(x) for x in sudo_str.split(",") if x.strip().isdigit()]
 
-HELP_TXT = """**🌟 Help Menu** **__FOR PRIVATE CHATS__**
-
 HELP_TXT = """**📚 SAVE RESTRICTED CONTENT - HELP MENU**
 
 **🟢 1. PRIVATE CHATS**
