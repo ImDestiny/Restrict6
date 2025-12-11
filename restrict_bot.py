@@ -158,7 +158,7 @@ PENDING_TASKS = {}
 PROGRESS = {}
 SESSION_STRING_SIZE = 351
 
-MAX_CONCURRENT_TASKS_PER_USER = 3
+MAX_CONCURRENT_TASKS_PER_USER = int(os.environ.get("MAX_TASKS_PER_USER", "3"))
 
 GlobalUserSession = None
 if STRING_SESSION and not LOGIN_SYSTEM:
@@ -247,7 +247,10 @@ async def split_file_python(file_path, chunk_size=1900*1024*1024):
             part_num += 1
     return parts
 
-def progress(current, total, message, typ):
+def progress(current, total, message, typ, task_uuid=None):
+    if task_uuid and CANCEL_FLAGS.get(task_uuid):
+        raise Exception("CANCELLED_BY_USER")
+
     try:
         msg_id = int(message.id)
     except:
@@ -277,7 +280,7 @@ def progress(current, total, message, typ):
         rec["last_current"] = current
         if speed > 0 and total > current:
             rec["eta"] = (total - current) / speed
-
+            
 async def downstatus(client: Client, status_message: Message, chat, index: int, total_count: int):
     msg_id = status_message.id
     key = f"{msg_id}:down"
@@ -868,8 +871,26 @@ async def process_speed_input(client: Client, message: Message):
         await message.reply("❌ Task expired.")
 
 async def start_task_final(client: Client, message_context: Message, task_data: dict, delay: int, user_id: int):
+    # FIX 1: Check Limit Here
+    if user_id not in ADMINS and batch_temp.ACTIVE_TASKS[user_id] >= MAX_CONCURRENT_TASKS_PER_USER:
+        try:
+            msg = f"⚠️ **Limit Reached:** You have {batch_temp.ACTIVE_TASKS[user_id]} active tasks. Please wait."
+            if isinstance(message_context, Message):
+                if message_context.from_user.is_bot:
+                    await message_context.edit(msg)
+                else:
+                    await message_context.reply(msg)
+        except:
+            pass
+        return
+
     task_uuid = uuid.uuid4().hex
     dest = task_data.get("dest_title", "Direct Message")
+    
+    # FIX 2: Increment Counter Here (Only Once)
+    batch_temp.ACTIVE_TASKS[user_id] += 1
+    batch_temp.IS_BATCH[user_id] = False
+
     try:
         if isinstance(message_context, Message):
             if message_context.from_user.is_bot:
@@ -887,9 +908,6 @@ async def start_task_final(client: Client, message_context: Message, task_data: 
         "started": time.time()
     }
 
-    batch_temp.ACTIVE_TASKS[user_id] += 1
-    batch_temp.IS_BATCH[user_id] = False
-
     asyncio.create_task(
         process_links_logic(
             client,
@@ -902,7 +920,7 @@ async def start_task_final(client: Client, message_context: Message, task_data: 
             task_uuid=task_uuid
         )
     )
-
+    
 async def process_links_logic(client: Client, message: Message, text: str, dest_chat_id=None, dest_thread_id=None, delay=3, acc_user_id=None, task_uuid=None):
     if acc_user_id:
         user_id = acc_user_id
@@ -1023,14 +1041,6 @@ async def process_links_logic(client: Client, message: Message, text: str, dest_
         total_count = 0
         status_message = None
         filter_thread_id = None
-
-        if batch_temp.ACTIVE_TASKS[user_id] >= MAX_CONCURRENT_TASKS_PER_USER:
-            if task_uuid in ACTIVE_PROCESSES.get(user_id, {}):
-                del ACTIVE_PROCESSES[user_id][task_uuid]
-            return await message.reply_text(f"**Limit Reached:** Please wait for tasks to finish.")
-
-        batch_temp.ACTIVE_TASKS[user_id] += 1
-        batch_temp.IS_BATCH[user_id] = False
 
         try:
             was_cancelled = False
@@ -1258,15 +1268,6 @@ async def handle_private(client: Client, acc, message: Message, chatid, msgid: i
     try:
         msg = await acc.get_messages(chatid, msgid)
     except UserNotParticipant:
-        try:
-            await status_message.edit_text(
-                f"**Task Failed!** 🛑\n\n"
-                f"Error: Your account is **not a member** of this private channel.\n"
-                f"Please join: `{chatid}`"
-            )
-            batch_temp.IS_BATCH[user_id] = True
-        except:
-            pass
         return False
     except Exception as e:
         print(f"Failed to get message {msgid}. It might be deleted.")
@@ -1281,23 +1282,26 @@ async def handle_private(client: Client, acc, message: Message, chatid, msgid: i
     if batch_temp.IS_BATCH.get(user_id) or (task_uuid and CANCEL_FLAGS.get(task_uuid)):
         return False
 
+    # FAST FORWARD (Copy Message)
     if not msg.chat.has_protected_content:
         try:
+            # Note: Bots can't copy files > 2GB usually. If this fails for large files, it falls back to download/upload.
             await acc.copy_message(chat_id=dest_chat_id, from_chat_id=chatid, message_id=msgid, message_thread_id=dest_thread_id)
             await asyncio.sleep(delay)
             return True
         except FileReferenceExpired:
-            print(f"Fast-forward failed (FileRefExpired) for {msgid}. Trying slow path...")
+            pass
         except Exception:
-            print(f"Fast-forward failed (Other Error) for {msgid}. Trying slow path...")
+            pass
 
     if "Text" == msg_type:
         try: await client.send_message(dest_chat_id, msg.text, entities=msg.entities, message_thread_id=dest_thread_id)
         except: pass
         return True
 
+    # SETUP DOWNLOAD
     asyncio.create_task(downstatus(client, status_message, message.chat.id, index, total_count))
-
+    
     task_id = status_message.id
     task_folder_path = Path(f"./downloads/{user_id}/{task_id}/")
     task_folder_path.mkdir(parents=True, exist_ok=True)
@@ -1316,142 +1320,176 @@ async def handle_private(client: Client, acc, message: Message, chatid, msgid: i
     file_path = None
     ph_path = None
     download_success = False
-
-    for attempt in range(3):
-        if batch_temp.IS_BATCH.get(user_id) or (task_uuid and CANCEL_FLAGS.get(task_uuid)):
-            return False
-        try:
-            msg_fresh = await acc.get_messages(chatid, msgid)
-            if msg_fresh.empty:
-                return False
-
-            file_size = 0
-            if msg_fresh.document: file_size = msg_fresh.document.file_size
-            elif msg_fresh.video: file_size = msg_fresh.video.file_size
-            elif msg_fresh.audio: file_size = msg_fresh.audio.file_size
-            elif msg_fresh.photo: file_size = msg_fresh.photo.file_size
-
-            if file_size > 2000 * 1024 * 1024:
-                file_path = await acc.download_media(msg_fresh, file_name=str(file_path_to_save), progress=progress, progress_args=[status_message,"down"])
-                await status_message.edit_text("Processing large file... Splitting (Python Mode) 🔪")
-                parts = await split_file_python(file_path, chunk_size=1900*1024*1024)
-                caption = msg.caption[:1024] if msg.caption else ""
-                async with USER_UPLOAD_LOCKS[user_id]:
-                    async with UPLOAD_SEMAPHORE:
-                        for part in parts:
-                            if batch_temp.IS_BATCH.get(user_id) or (task_uuid and CANCEL_FLAGS.get(task_uuid)):
-                                break
-                            while True:
-                                try:
-                                    await client.send_document(dest_chat_id, str(part), caption=f"{caption}", message_thread_id=dest_thread_id)
-                                    break
-                                except FloodWait as e:
-                                    await asyncio.sleep(e.value)
-                                except Exception as e:
-                                    print(f"Error uploading part: {e}")
-                                    break
-                            try:
-                                os.remove(part)
-                            except: pass
-                try:
-                    if file_path and os.path.exists(file_path):
-                        os.remove(file_path)
-                except: pass
-                download_success = True
-                try:
-                    if task_folder_path.exists():
-                        shutil.rmtree(task_folder_path)
-                except Exception as e:
-                    print(f"Error cleaning up folder: {e}")
-                gc.collect()
-                return True
-
-            file_path = await acc.download_media(msg_fresh, file_name=str(file_path_to_save), progress=progress, progress_args=[status_message,"down"])
-            ph_path = None
-            try:
-                if "Document" == msg_type and msg_fresh.document.thumbs:
-                    ph_path = await acc.download_media(msg_fresh.document.thumbs[0].file_id, file_name=str(task_folder_path / "thumb.jpg"))
-                elif "Video" == msg_type and msg_fresh.video.thumbs:
-                    ph_path = await acc.download_media(msg_fresh.video.thumbs[0].file_id, file_name=str(task_folder_path / "thumb.jpg"))
-                elif "Audio" == msg_type and msg_fresh.audio.thumbs:
-                    ph_path = await acc.download_media(msg_fresh.audio.thumbs[0].file_id, file_name=str(task_folder_path / "thumb.jpg"))
-            except Exception as e:
-                print(f"Thumbnail download failed: {e}")
-                ph_path = None
-
-            download_success = True
-            break
-
-        except FileReferenceExpired:
-            print(f"File Reference Expired on download for msg {msgid}. Retrying in 5s (Attempt {attempt+1}/3).")
-            await asyncio.sleep(5)
-        except Exception as e:
-            print(f"Download attempt failed: {e}")
-            await asyncio.sleep(5)
-
-    if not download_success:
-        return False
-
-    if batch_temp.IS_BATCH.get(user_id) or (task_uuid and CANCEL_FLAGS.get(task_uuid)):
-        return False
-
-    asyncio.create_task(upstatus(client, status_message, message.chat.id, index, total_count))
-
-    caption = msg.caption if msg.caption else None
-    if caption and len(caption) > 1024:
-        caption = caption[:1024]
-
     upload_success = False
 
-    if file_path and not os.path.exists(file_path):
-         return True
-
-    async with USER_UPLOAD_LOCKS[user_id]:
-        async with UPLOAD_SEMAPHORE:
-            while True:
-                if batch_temp.IS_BATCH.get(user_id) or (task_uuid and CANCEL_FLAGS.get(task_uuid)):
-                    break
-                try:
-                    if "Document" == msg_type:
-                        await client.send_document(dest_chat_id, file_path, thumb=ph_path, caption=caption, message_thread_id=dest_thread_id, progress=progress, progress_args=[status_message,"up"])
-                    elif "Video" == msg_type:
-                        await client.send_video(dest_chat_id, file_path, duration=msg.video.duration, width=msg.video.width, height=msg.video.height, thumb=ph_path, caption=caption, message_thread_id=dest_thread_id, progress=progress, progress_args=[status_message,"up"])
-                    elif "Audio" == msg_type:
-                        await client.send_audio(dest_chat_id, file_path, thumb=ph_path, caption=caption, message_thread_id=dest_thread_id, progress=progress, progress_args=[status_message,"up"])
-                    elif "Photo" == msg_type:
-                        await client.send_photo(dest_chat_id, file_path, caption=caption, message_thread_id=dest_thread_id)
-                    elif "Voice" == msg_type:
-                        await client.send_voice(dest_chat_id, file_path, caption=caption, message_thread_id=dest_thread_id, progress=progress, progress_args=[status_message,"up"])
-                    elif "Animation" == msg_type:
-                        await client.send_animation(dest_chat_id, file_path, caption=caption, message_thread_id=dest_thread_id)
-                    elif "Sticker" == msg_type:
-                        await client.send_sticker(dest_chat_id, file_path, message_thread_id=dest_thread_id)
-                    upload_success = True
-                    break
-                except FloodWait as e:
-                    print(f"Upload FloodWait: Sleeping {e.value}s")
-                    await asyncio.sleep(e.value)
-                except Exception as e:
-                    print(f"Upload failed: {e}")
-                    upload_success = False
-                    break
-
+    # --- AUTO-DETECT PREMIUM LIMIT ---
+    # Default: 2000MB (2GB)
+    split_limit = 2000 * 1024 * 1024 
+    chunk_size_split = 1900 * 1024 * 1024
+    is_premium = False
+    
     try:
-        if f"{task_id}:down" in PROGRESS:
-            del PROGRESS[f"{task_id}:down"]
-        if f"{task_id}:up" in PROGRESS:
-            del PROGRESS[f"{task_id}:up"]
-    except:
-        pass
-
-    try:
-        if task_folder_path.exists():
-            shutil.rmtree(task_folder_path)
+        # Check if the User Session (acc) is Premium
+        me = acc.me if acc.me else await acc.get_me()
+        if me.is_premium:
+            is_premium = True
+            split_limit = 4000 * 1024 * 1024 # ~4GB for Premium
+            chunk_size_split = 3900 * 1024 * 1024
     except Exception as e:
-        print(f"Error cleaning up folder {task_folder_path}: {e}")
+        print(f"Error checking premium status: {e}")
+        pass
+    # ---------------------------------
 
-    gc.collect()
-    return upload_success
+    try: # MAIN TRY BLOCK FOR CLEANUP
+        for attempt in range(3):
+            if batch_temp.IS_BATCH.get(user_id) or (task_uuid and CANCEL_FLAGS.get(task_uuid)):
+                return False
+            try:
+                msg_fresh = await acc.get_messages(chatid, msgid)
+                if msg_fresh.empty: return False
+
+                file_size = 0
+                if msg_fresh.document: file_size = msg_fresh.document.file_size
+                elif msg_fresh.video: file_size = msg_fresh.video.file_size
+                elif msg_fresh.audio: file_size = msg_fresh.audio.file_size
+                
+                # --- LOGIC: SPLIT OR DOWNLOAD ---
+                if file_size > split_limit:
+                    # File is too big (e.g. >2GB for Free, or >4GB for Premium) -> MUST SPLIT
+                    
+                    # 1. Download
+                    file_path = await acc.download_media(
+                        msg_fresh, 
+                        file_name=str(file_path_to_save), 
+                        progress=progress, 
+                        progress_args=[status_message, "down", task_uuid]
+                    )
+                    
+                    # 2. Split
+                    await status_message.edit_text(f"Processing large file ({_pretty_bytes(file_size)})... Splitting 🔪")
+                    # Use 2GB chunks for splitting to ensure the BOT can upload them safely
+                    parts = await split_file_python(file_path, chunk_size=1900*1024*1024)
+                    
+                    # 3. Upload Parts
+                    caption = msg.caption[:1024] if msg.caption else ""
+                    async with USER_UPLOAD_LOCKS[user_id]:
+                        async with UPLOAD_SEMAPHORE:
+                            for part in parts:
+                                if batch_temp.IS_BATCH.get(user_id) or (task_uuid and CANCEL_FLAGS.get(task_uuid)):
+                                    raise Exception("CANCELLED_BY_USER")
+                                
+                                while True:
+                                    try:
+                                        # Use Bot (client) to upload split parts (they are <2GB)
+                                        await client.send_document(dest_chat_id, str(part), caption=f"{caption}", message_thread_id=dest_thread_id)
+                                        break
+                                    except FloodWait as e:
+                                        await asyncio.sleep(e.value)
+                                    except Exception as e:
+                                        print(f"Error uploading part: {e}")
+                                        break
+                                try: os.remove(part)
+                                except: pass
+                    
+                    try:
+                        if file_path and os.path.exists(file_path): os.remove(file_path)
+                    except: pass
+                    return True # Finished handling split file
+
+                else:
+                    # File is within limit (<= 2GB OR <= 4GB if Premium) -> NORMAL DOWNLOAD
+                    file_path = await acc.download_media(
+                        msg_fresh, 
+                        file_name=str(file_path_to_save), 
+                        progress=progress, 
+                        progress_args=[status_message, "down", task_uuid]
+                    )
+                
+                # THUMBNAIL
+                try:
+                    if "Document" == msg_type and msg_fresh.document.thumbs:
+                        ph_path = await acc.download_media(msg_fresh.document.thumbs[0].file_id, file_name=str(task_folder_path / "thumb.jpg"))
+                    elif "Video" == msg_type and msg_fresh.video.thumbs:
+                        ph_path = await acc.download_media(msg_fresh.video.thumbs[0].file_id, file_name=str(task_folder_path / "thumb.jpg"))
+                    elif "Audio" == msg_type and msg_fresh.audio.thumbs:
+                        ph_path = await acc.download_media(msg_fresh.audio.thumbs[0].file_id, file_name=str(task_folder_path / "thumb.jpg"))
+                except:
+                    ph_path = None
+
+                download_success = True
+                break
+
+            except Exception as e:
+                if "CANCELLED_BY_USER" in str(e): return False
+                if isinstance(e, FileReferenceExpired): await asyncio.sleep(5)
+                else: await asyncio.sleep(5)
+
+        if not download_success:
+            return False
+
+        if batch_temp.IS_BATCH.get(user_id) or (task_uuid and CANCEL_FLAGS.get(task_uuid)):
+            return False
+
+        asyncio.create_task(upstatus(client, status_message, message.chat.id, index, total_count))
+        
+        caption = msg.caption[:1024] if msg.caption else None
+
+        if file_path and not os.path.exists(file_path):
+             return True
+
+        # --- UPLOAD STRATEGY ---
+        # If file > 2GB, Bot (client) cannot upload it. We must use User Session (acc).
+        uploader = client
+        if os.path.getsize(file_path) > 2000 * 1024 * 1024:
+            uploader = acc 
+            # Note: If uploader is 'acc', it sends to dest_chat_id as the User.
+            # If dest_chat_id is the Bot's DM, the file will appear in "Saved Messages" of the User.
+
+        async with USER_UPLOAD_LOCKS[user_id]:
+            async with UPLOAD_SEMAPHORE:
+                while True:
+                    if batch_temp.IS_BATCH.get(user_id) or (task_uuid and CANCEL_FLAGS.get(task_uuid)):
+                        break
+                    try:
+                        if "Document" == msg_type:
+                            await uploader.send_document(dest_chat_id, file_path, thumb=ph_path, caption=caption, message_thread_id=dest_thread_id, progress=progress, progress_args=[status_message,"up", task_uuid])
+                        elif "Video" == msg_type:
+                            await uploader.send_video(dest_chat_id, file_path, duration=msg.video.duration, width=msg.video.width, height=msg.video.height, thumb=ph_path, caption=caption, message_thread_id=dest_thread_id, progress=progress, progress_args=[status_message,"up", task_uuid])
+                        elif "Audio" == msg_type:
+                            await uploader.send_audio(dest_chat_id, file_path, thumb=ph_path, caption=caption, message_thread_id=dest_thread_id, progress=progress, progress_args=[status_message,"up", task_uuid])
+                        elif "Photo" == msg_type:
+                            await uploader.send_photo(dest_chat_id, file_path, caption=caption, message_thread_id=dest_thread_id)
+                        elif "Voice" == msg_type:
+                            await uploader.send_voice(dest_chat_id, file_path, caption=caption, message_thread_id=dest_thread_id, progress=progress, progress_args=[status_message,"up", task_uuid])
+                        elif "Animation" == msg_type:
+                            await uploader.send_animation(dest_chat_id, file_path, caption=caption, message_thread_id=dest_thread_id)
+                        elif "Sticker" == msg_type:
+                            await uploader.send_sticker(dest_chat_id, file_path, message_thread_id=dest_thread_id)
+                        upload_success = True
+                        break
+                    except Exception as e:
+                        if "CANCELLED_BY_USER" in str(e):
+                            upload_success = False
+                            break
+                        if isinstance(e, FloodWait):
+                            await asyncio.sleep(e.value)
+                        else:
+                            print(f"Upload failed: {e}")
+                            upload_success = False
+                            break
+        
+        return upload_success
+
+    finally:
+        # CLEANUP
+        try:
+            if f"{task_id}:down" in PROGRESS: del PROGRESS[f"{task_id}:down"]
+            if f"{task_id}:up" in PROGRESS: del PROGRESS[f"{task_id}:up"]
+        except: pass
+        try:
+            if task_folder_path.exists(): shutil.rmtree(task_folder_path)
+        except Exception as e: pass
+        gc.collect()
 
 # ==============================================================================
 # --- Koyeb health check (optional) ---
