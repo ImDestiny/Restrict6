@@ -42,22 +42,25 @@ ADMINS = [int(x) for x in admin_str.split(",") if x.strip().isdigit()]
 sudo_str = os.environ.get("SUDOS", "")
 SUDOS = [int(x) for x in sudo_str.split(",") if x.strip().isdigit()]
 
-HELP_TXT = """**📚 SAVE RESTRICTED CONTENT - HELP MENU**
+HELP_TXT = """**📚 BOT'S HELP MENU**
 
 ▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬✘▬
 
 **🟢 1. PRIVATE CHATS**
+
 • First, send the **Invite Link** of the chat.
   *(Not needed if you are already a member via the session account)*
-• Then, send the **Post Link** you want to download.
+• Then, send the **Post Link** you want to download or forward.
 
 **🤖 2. BOT CHATS**
+
 • Send the link with `/b/`, the bot's username, and message ID.
 • You usually need an unofficial client (like Plus Messenger or Nekogram) to get these links.
 • **Format:** `https://t.me/b/botusername/4321`
 
 **📦 3. BATCH / MULTI-POSTS**
-• Send links in the "From - To" format to download multiple files at once.
+
+• Send links in the "From - To" format to download or forward multiple files at once.
 • Works for both Public and Private links.
 • **Examples:**
   ├ `https://t.me/xxxx/1001-1010`
