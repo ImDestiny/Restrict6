@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import os
 import psutil
 import time
@@ -43,6 +44,8 @@ SUDOS = [int(x) for x in sudo_str.split(",") if x.strip().isdigit()]
 
 HELP_TXT = """**📚 SAVE RESTRICTED CONTENT - HELP MENU**
 
+▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬✘▬
+
 **🟢 1. PRIVATE CHATS**
 • First, send the **Invite Link** of the chat.
   *(Not needed if you are already a member via the session account)*
@@ -60,7 +63,9 @@ HELP_TXT = """**📚 SAVE RESTRICTED CONTENT - HELP MENU**
   ├ `https://t.me/xxxx/1001-1010`
   └ `https://t.me/c/xxxx/101 - 120`
 
-**💡 Note:** Spaces between the numbers do not matter!"""
+**💡 Note:** Spaces between the numbers do not matter!
+
+▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬✘▬"""
 
 # ==============================================================================
 # --- DATABASE ---
