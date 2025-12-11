@@ -586,7 +586,16 @@ async def login_handler(bot: Client, message: Message):
         api_id = API_ID
         api_hash = API_HASH
 
-        phone_number_msg = await bot.ask(chat_id=user_id, text="<b>Now Send Me Your Phone Number With Country Code (E.g., +917182818188)</b>\n\n<b>Send /cancel to abort.</b>", filters=filters.text)
+        # --- NEW LOGIN TEXT ---
+        login_text = (
+            "🔐 **Login Process Initiated**\n\n"
+            "Please send your **Phone Number** in international format.\n"
+            "Example: `+1234567890`\n\n"
+            "🛡️ *Your session is stored securely locally.*"
+        )
+        phone_number_msg = await bot.ask(chat_id=user_id, text=login_text, filters=filters.text)
+        # ----------------------
+        
         if phone_number_msg.text == '/cancel':
             return await phone_number_msg.reply('<b>process cancelled !</b>')
         phone_number = phone_number_msg.text
@@ -636,7 +645,16 @@ async def login_handler(bot: Client, message: Message):
         await api_hash_msg.reply("**❌ Invalid API HASH**\n\nPlease start again with /login.", quote=True)
         return
 
-    phone_number_msg = await bot.ask(chat_id=user_id, text="<b>Finally, send your phone number with country code (e.g., +917182818188)</b>\n\n<b>Send /cancel to abort.</b>", filters=filters.text)
+    # --- NEW LOGIN TEXT ---
+    login_text = (
+        "🔐 **Login Process Initiated**\n\n"
+        "Please send your **Phone Number** in international format.\n"
+        "Example: `+1234567890`\n\n"
+        "🛡️ *Your session is stored securely locally.*"
+    )
+    phone_number_msg = await bot.ask(chat_id=user_id, text=login_text, filters=filters.text)
+    # ----------------------
+    
     if phone_number_msg.text == '/cancel':
         return await phone_number_msg.reply('<b>process cancelled !</b>')
     phone_number = phone_number_msg.text
