@@ -375,11 +375,20 @@ async def send_help(client: Client, message: Message):
 @app.on_message(filters.command(["cancel"]) & (filters.private | filters.group))
 async def send_cancel(client: Client, message: Message):
     user_id = message.from_user.id
+
+    # 1. Check if user is stuck in "Setup Mode" (waiting for ID or Delay)
+    if user_id in PENDING_TASKS:
+        del PENDING_TASKS[user_id]
+        await message.reply("✅ **Setup process cancelled.** You can send a new link now.")
+        return
+
+    # 2. Check if user has active downloads running
     user_tasks = ACTIVE_PROCESSES.get(user_id, {})
     if not user_tasks:
         await message.reply("✅ **No active tasks to cancel.**")
         return
 
+    # 3. Show menu to cancel active downloads
     buttons = []
     for tid, info in list(user_tasks.items()):
         label = info.get("item", "Task")
@@ -393,11 +402,19 @@ async def send_cancel(client: Client, message: Message):
         reply_markup=InlineKeyboardMarkup(buttons),
         quote=True
     )
-
+    
 @app.on_callback_query(filters.regex(r"^cancel_") | filters.regex(r"^cancel_task:"))
 async def cancel_callback(client: Client, query):
     user_id = query.from_user.id
     data = query.data
+
+    # --- FIX: Handle "cancel_setup" here because the regex ^cancel_ catches it ---
+    if data == "cancel_setup":
+        if user_id in PENDING_TASKS:
+            del PENDING_TASKS[user_id]
+        await query.message.edit("❌ **Task Setup Cancelled.**")
+        return
+    # --------------------------------------------------------------------------
 
     if data == "cancel_all":
         user_tasks = list(ACTIVE_PROCESSES.get(user_id, {}).keys())
@@ -412,13 +429,6 @@ async def cancel_callback(client: Client, query):
         await query.message.edit("**🛑 Cancelling ALL your tasks...**\n(This may take a moment to stop current downloads)")
         return
 
-    if data == "close_menu":
-        try:
-            await query.message.delete()
-        except:
-            await query.answer("Closed.")
-        return
-
     if data.startswith("cancel_task:"):
         task_uuid = data.split(":",1)[1]
         user_tasks = ACTIVE_PROCESSES.get(user_id, {})
@@ -430,20 +440,13 @@ async def cancel_callback(client: Client, query):
         CANCEL_FLAGS[task_uuid] = True
         await query.message.edit(f"🛑 **Task cancelled:** `{user_tasks[task_uuid].get('item','Task')}`\nIt will stop shortly.")
         return
-
+        
 @app.on_callback_query(filters.regex("^close_menu"))
 async def close_menu(client, query):
     try:
         await query.message.delete()
     except:
         await query.answer("Menu closed.")
-
-@app.on_callback_query(filters.regex("^cancel_setup"))
-async def cancel_setup_handler(client, query):
-    user_id = query.from_user.id
-    if user_id in PENDING_TASKS:
-        del PENDING_TASKS[user_id]
-    await query.message.edit("❌ **Task Setup Cancelled.**")
 
 @app.on_message(filters.command(["status"]) & (filters.user(ADMINS) | filters.user(SUDOS)))
 async def status_style_handler(client, message):
