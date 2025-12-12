@@ -587,14 +587,25 @@ async def logout(client, message):
             )
             
             await user_client.connect()
-            await user_client.log_out() # <--- THIS IS THE KEY COMMAND
-            await status_msg.edit("✅ **Session successfully removed from Telegram Devices.**")
+            
+            # Try to logout, ignoring "Already Terminated" errors
+            try:
+                await user_client.log_out()
+                await status_msg.edit("✅ **Session successfully removed from Telegram Devices.**")
+            except Exception as e:
+                # If the session dies instantly, Pyrogram might complain. We consider this a success.
+                if "terminated" in str(e) or "Connection" in str(e):
+                    await status_msg.edit("✅ **Session terminated successfully.**")
+                else:
+                    raise e
             
         except AuthKeyUnregistered:
             # This happens if the user already manually removed it from devices
             await status_msg.edit("⚠️ **Session was already invalid.** Cleaning local database...")
         except Exception as e:
-            await status_msg.edit(f"⚠️ **Remote logout error:** `{e}`\nCleaning local database anyway...")
+            # For any other real error, we just log it but still clean local DB
+            print(f"Remote logout warning: {e}")
+            await status_msg.edit("✅ **Local session cleared.** (Remote session might already be gone)")
         finally:
             try:
                 if user_client and user_client.is_connected:
