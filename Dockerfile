@@ -20,4 +20,4 @@ COPY . .
 EXPOSE 8080
 
 # Run the bot
-CMD ["python3", "restrict.py"]
+CMD ["python3", "restrict_bot.py"]
