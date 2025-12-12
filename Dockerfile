@@ -1,21 +1,17 @@
-# Use Python 3.12 (Slim Bookworm)
+# Use Python 3.12 (Slim Bookworm - smallest modern base)
 FROM python:3.12-slim-bookworm
 
 # Set working directory
 WORKDIR /app
 
-# Install system build dependencies (GCC, Python Dev headers)
-RUN apt-get update && apt-get install -y \
-    gcc \
-    python3-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Upgrade pip ensuring you have the latest installer
-RUN pip3 install --upgrade pip
-
-# Copy requirements and install dependencies
+# One-liner to install GCC, build tgcrypto, and then delete GCC instantly
 COPY requirements.txt .
-RUN pip3 install -r requirements.txt
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc python3-dev && \
+    pip3 install --no-cache-dir --upgrade pip && \
+    pip3 install --no-cache-dir -r requirements.txt && \
+    apt-get purge -y --auto-remove gcc python3-dev && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy the rest of your files
 COPY . .
